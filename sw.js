@@ -1,6 +1,6 @@
 // Service worker: deixa o app abrir rápido e funcionar sem internet.
 // Quando mudar algum arquivo, aumente o número da versão abaixo.
-const CACHE = 'meu-bolso-v1';
+const CACHE = 'meu-bolso-v2';
 const SHELL = ['./', './index.html', './css/style.css', './js/app.js', './js/db.js', './js/firebase-config.js',
   './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png'];
 

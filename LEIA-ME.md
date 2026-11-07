@@ -90,7 +90,7 @@ export const firebaseConfig = {
 1. Firebase → **Authentication → Configurações → Domínios autorizados**.
 2. **Adicionar domínio** → digite `SEUUSUARIO.github.io` (sem `https://` e sem `/meu-bolso`) → Adicionar.
 
-Pronto! Abra o endereço, toque em **Criar conta** e use o mesmo e-mail e senha no celular e no computador.
+Pronto! Abra o endereço, escolha um **apelido** e uma **senha**, toque em **Criar conta** e use os mesmos no celular e no computador. Guarde bem a senha: como não existe e-mail de verdade, ela não pode ser recuperada.
 
 ## Passo 7 — Instalar no celular
 
@@ -104,7 +104,7 @@ O ícone aparece na tela inicial e abre em tela cheia, como um app normal.
 ## Usar em dupla (compartilhar a planilha)
 
 1. No seu app: **Ajustes → Compartilhar planilha → Copiar link de convite**. No celular, ele já abre o menu para mandar pelo WhatsApp.
-2. A outra pessoa abre o link, toca em **Criar conta** (ou entra com o Google) usando o **login dela**.
+2. A outra pessoa abre o link, escolhe o **apelido e a senha dela** e toca em **Criar conta**.
 3. Ela entra direto na mesma planilha. A partir daí, os dois veem e lançam tudo em tempo real.
 4. Depois que ela entrar, desmarque **"Aceitar novas pessoas pelo link"**. Assim o link para de funcionar para qualquer outra pessoa.
 
@@ -140,11 +140,10 @@ Já deixei pré-cadastrados os dados da sua planilha: as categorias, as 3 fontes
 | "Este endereço não está autorizado" | Faltou o passo 6 |
 | "Sem permissão no banco" | Faltou publicar as regras (passo 3) |
 | "Esse tipo de login não foi ativado" | Faltou o passo 2 |
-| Login com Google não abre no iPhone | Use e-mail e senha, que funcionam em qualquer lugar |
+| Esqueci a senha | Não dá para recuperar. Se a planilha for compartilhada: Firebase → Authentication → Usuários → ⋮ → **Excluir conta**, crie de novo com o mesmo apelido e peça um convite novo (os dados continuam na planilha). Se for só sua, os dados ficam presos na conta antiga, por isso baixe um backup de vez em quando (Ajustes → Dados) |
 | Mudei algo e o celular não atualizou | Aumente a versão no `sw.js` e reabra o app |
 | Site 404 no GitHub | Confira se o `index.html` está na raiz do repositório, e não dentro de uma subpasta |
 
 ## Custos
 
 O plano gratuito do Firebase (Spark) permite 50 mil leituras e 20 mil gravações **por dia**. O uso pessoal fica muito abaixo disso. O GitHub Pages também é gratuito.
-

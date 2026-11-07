@@ -357,7 +357,7 @@ function settingsHTML() {
     </section>
     <section class="card">
       <h2>Conta</h2>
-      <p class="muted">${DEMO ? 'Para sincronizar entre celular e computador, siga o guia LEIA-ME e preencha o arquivo firebase-config.js.' : 'Conectado como ' + esc(S.user.email || S.user.name || '')}</p>
+      <p class="muted">${DEMO ? 'Para sincronizar entre celular e computador, siga o guia LEIA-ME e preencha o arquivo firebase-config.js.' : 'Conectado como <b>' + esc(emailToNick(S.user.email) || S.user.name || '') + '</b>'}</p>
       <button class="btn ghost small" data-act="rename">Mudar nome do app</button>
       ${DEMO ? '' : '<button class="btn ghost small danger" data-act="logout">Sair</button>'}
     </section>
@@ -416,48 +416,49 @@ async function maybeJoin() {
   catch (e) { console.error(e); toast(JOIN_ERR, true); }
 }
 
-/* ---------------- Login ---------------- */
+/* ---------------- Login (apelido + senha) ---------------- */
+// O Firebase exige e-mail, então o apelido vira um e-mail interno que ninguém vê.
+const NICK_DOMAIN = '@meubolso.app';
+const normNick = (s) => String(s || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+const nickToEmail = (n) => normNick(n) + NICK_DOMAIN;
+const emailToNick = (e) => String(e || '').replace(NICK_DOMAIN, '');
 function loginHTML() {
   return `<main class="container login">
     <div class="card login-card">
       <h1 class="title">Meu Bolso <span class="heart">♡</span></h1>
       <p class="subtitle">entre para sincronizar celular e computador</p>
-      <form id="login-form" class="stack">
-        <input class="input" type="email" id="l-email" placeholder="E-mail" autocomplete="email" required>
-        <input class="input" type="password" id="l-pass" placeholder="Senha (mínimo 6 caracteres)" autocomplete="current-password" required minlength="6">
+      <form id="login-form" class="stack" novalidate>
+        <input class="input" type="text" id="l-nick" placeholder="Apelido (ex: lucas)" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="20">
+        <input class="input" type="password" id="l-pass" placeholder="Senha (mínimo 6 caracteres)" autocomplete="current-password">
         <button class="btn primary" type="submit">Entrar</button>
         <button class="btn ghost" type="button" id="l-signup">Criar conta</button>
       </form>
-      <div class="or"><span>ou</span></div>
-      <button class="btn ghost" id="l-google">Entrar com Google</button>
-      <button class="link center-block" id="l-reset">Esqueci minha senha</button>
+      <p class="hint center">Primeira vez? Escolha um apelido e uma senha e toque em <b>Criar conta</b>. Guarde bem a senha: não dá para recuperar.</p>
       <p id="l-err" class="err" role="alert"></p>
     </div></main>`;
 }
 const AUTH_ERR = {
-  'auth/invalid-credential': 'E-mail ou senha incorretos.',
+  'auth/invalid-credential': 'Apelido ou senha incorretos.',
   'auth/wrong-password': 'Senha incorreta.',
-  'auth/user-not-found': 'Não existe conta com esse e-mail. Toque em “Criar conta”.',
-  'auth/email-already-in-use': 'Esse e-mail já tem conta. Toque em “Entrar”.',
+  'auth/user-not-found': 'Não existe conta com esse apelido. Toque em “Criar conta”.',
+  'auth/email-already-in-use': 'Esse apelido já está em uso. Escolha outro ou toque em “Entrar”.',
   'auth/weak-password': 'A senha precisa ter pelo menos 6 caracteres.',
-  'auth/invalid-email': 'E-mail inválido.',
-  'auth/unauthorized-domain': 'Este endereço não está autorizado no Firebase (passo 6 do guia).',
-  'auth/operation-not-allowed': 'Esse tipo de login não foi ativado no Firebase (passo 2 do guia).',
-  'auth/popup-closed-by-user': 'Login cancelado.',
+  'auth/invalid-email': 'Apelido inválido.',
+  'auth/operation-not-allowed': 'O login por E-mail/senha não está ativado no Firebase (etapa 2).',
   'auth/network-request-failed': 'Sem internet. Tente de novo.',
   'auth/too-many-requests': 'Muitas tentativas. Espere um pouco.'
 };
 function bindLogin() {
-  const err = (e) => ($('#l-err').textContent = AUTH_ERR[e.code] || e.message || String(e));
-  const vals = () => [$('#l-email').value.trim(), $('#l-pass').value];
-  $('#login-form').onsubmit = (ev) => { ev.preventDefault(); authApi.login(...vals()).catch(err); };
-  $('#l-signup').onclick = () => { const f = $('#login-form'); if (!f.reportValidity()) return; authApi.signup(...vals()).catch(err); };
-  $('#l-google').onclick = () => authApi.google().catch(err);
-  $('#l-reset').onclick = () => {
-    const e = $('#l-email').value.trim();
-    if (!e) return ($('#l-err').textContent = 'Digite seu e-mail acima primeiro.');
-    authApi.reset(e).then(() => ($('#l-err').textContent = 'Enviamos um link de redefinição para ' + e)).catch(err);
+  const msg = (t) => ($('#l-err').textContent = t);
+  const err = (e) => msg(AUTH_ERR[e.code] || e.message || String(e));
+  const read = () => {
+    const nick = normNick($('#l-nick').value), pass = $('#l-pass').value;
+    if (!/^[a-z0-9._-]{3,20}$/.test(nick)) { msg('O apelido precisa ter de 3 a 20 letras ou números, sem espaços (pode usar . _ -).'); return null; }
+    if (pass.length < 6) { msg('A senha precisa ter pelo menos 6 caracteres.'); return null; }
+    msg(''); return [nickToEmail(nick), pass];
   };
+  $('#login-form').onsubmit = (ev) => { ev.preventDefault(); const v = read(); if (v) authApi.login(...v).catch(err); };
+  $('#l-signup').onclick = () => { const v = read(); if (v) authApi.signup(...v).catch(err); };
 }
 
 /* =========================================================
