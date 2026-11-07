@@ -147,3 +147,4 @@ Já deixei pré-cadastrados os dados da sua planilha: as categorias, as 3 fontes
 ## Custos
 
 O plano gratuito do Firebase (Spark) permite 50 mil leituras e 20 mil gravações **por dia**. O uso pessoal fica muito abaixo disso. O GitHub Pages também é gratuito.
+
