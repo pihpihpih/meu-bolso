@@ -162,6 +162,7 @@ const ICON = {
   left: '<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>',
   right: '<svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>',
   close: '<svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+  upload: '<svg viewBox="0 0 24 24"><path d="M12 15V3m0 0-4 4m4-4 4 4"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>',
   search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>'
 };
 
@@ -191,9 +192,9 @@ function navHTML() {
   </nav>`;
 }
 
-function headerHTML(title, sub) {
+function headerHTML(title, sub, action = '') {
   return `<header class="topbar"><div><h1 class="title">${title}</h1>${sub ? `<p class="subtitle">${sub}</p>` : ''}</div>
-    ${DEMO ? '<span class="tag">demo</span>' : ''}</header>`;
+    <div class="top-actions">${DEMO ? '<span class="tag">demo</span>' : ''}${action}</div></header>`;
 }
 
 function monthSwitchHTML() {
@@ -303,11 +304,12 @@ function listBodyHTML() {
 function listHTML() {
   const chip = (v, label) => `<button class="chip ${S.filter === v ? 'on' : ''}" data-act="filter" data-f="${v}">${esc(label)}</button>`;
   return `
-    ${headerHTML('Lançamentos', '')}
+    ${headerHTML('Lançamentos', '', `<button class="top-btn" data-act="importCsv">${ICON.upload}<span>Importar<span class="lg"> fatura</span></span></button>`)}
     ${monthSwitchHTML()}
     <label class="search">${ICON.search}<input id="search" type="search" placeholder="Buscar descrição ou categoria" value="${esc(S.search)}"></label>
     <div class="chips scroll">${chip('all', 'Todos')}${chip('fixos', 'Fixos')}${accs().map((a) => chip(a.id, a.name)).join('')}${chip('income', 'Entradas')}</div>
-    <div id="list-body">${listBodyHTML()}</div>`;
+    <div id="list-body">${listBodyHTML()}</div>
+    <button class="btn ghost small import-btn" data-act="importCsv">${ICON.upload} Importar fatura do Nubank (CSV)</button>`;
 }
 
 /* ---------------- Ajustes ---------------- */
@@ -352,6 +354,7 @@ function settingsHTML() {
       <h2>Dados</h2>
       <button class="btn ghost small" data-act="exportCsv">Exportar ${monthName(S.month)} (planilha CSV)</button>
       <button class="btn ghost small" data-act="backup">Baixar backup completo</button>
+      <button class="btn ghost small" data-act="importCsv">Importar fatura do Nubank (CSV)</button>
       <button class="btn ghost small" data-act="restore">Restaurar backup</button>
       <input type="file" id="restore-file" accept="application/json" hidden>
     </section>
@@ -519,7 +522,7 @@ function openTxSheet(existing = null, presetKind = 'expense') {
     <input id="f-desc" class="input" placeholder="Descrição (ex: Uber, mercado, Shopee…)" list="desc-list" autocomplete="off" value="${esc(f.desc)}" enterkeyhint="done">
     <datalist id="desc-list">${descs.map((d) => `<option value="${esc(d)}">`).join('')}</datalist>
     <div class="field" ${show('expense fixed')}><label>Categoria</label>
-      <div class="chips grid-scroll" id="f-cat">${cats().map((c) => `<button class="chip cat" data-v="${esc(c.id)}" style="--c:${c.color}">${esc(c.icon)} ${esc(c.name)}</button>`).join('')}</div></div>
+      <div class="chips cat-grid" id="f-cat">${cats().map((c) => `<button class="chip cat" data-v="${esc(c.id)}" style="--c:${c.color}">${esc(c.icon)} ${esc(c.name)}</button>`).join('')}</div></div>
     <div class="field" ${show('expense')}><label>Pagou com</label>
       <div class="chips wrap" id="f-acc">${spendAccs.map((a) => `<button class="chip" data-v="${esc(a.id)}"><span class="dot" style="--c:${a.color}"></span>${esc(a.name)}</button>`).join('')}</div></div>
     <div class="field" ${show('expense income')}><label>Data</label>
@@ -799,6 +802,198 @@ async function restore(file) {
 }
 
 /* =========================================================
+   Importar fatura do Nubank (CSV)
+   Formato do app/e-mail do Nubank:  date,title,amount
+   (versões antigas: date,category,title,amount)
+   ========================================================= */
+function parseCSV(text) {
+  text = text.replace(/^﻿/, '');
+  const first = text.split(/\r?\n/)[0] || '';
+  const sep = (first.match(/;/g) || []).length > (first.match(/,/g) || []).length ? ';' : ',';
+  const rows = []; let row = [], cur = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; }
+      else cur += c;
+    } else if (c === '"') q = true;
+    else if (c === sep) { row.push(cur); cur = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(cur); cur = '';
+      if (row.some((x) => x.trim() !== '')) rows.push(row);
+      row = [];
+    } else cur += c;
+  }
+  row.push(cur); if (row.some((x) => x.trim() !== '')) rows.push(row);
+  return rows;
+}
+const normTxt = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+const normDesc = (s) => normTxt(s).replace(/-?\s*parcela\s*\d+\s*\/\s*\d+/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+function parseMoney(s) {
+  s = String(s || '').trim().replace(/R\$|\s/g, '');
+  if (/,\d{1,2}$/.test(s)) s = s.replace(/\./g, '').replace(',', '.'); // 1.234,56
+  else s = s.replace(/,/g, '');                                         // 1,234.56 / 1234.56
+  const n = parseFloat(s); return isNaN(n) ? null : n;
+}
+function parseDate(s) {
+  s = String(s || '').trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (m) { const y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`; }
+  return null;
+}
+function parseNubank(text) {
+  const rows = parseCSV(text);
+  if (rows.length < 2) throw new Error('o arquivo está vazio');
+  const head = rows[0].map(normTxt);
+  const col = (...names) => head.findIndex((h) => names.includes(h));
+  const iDate = col('date', 'data'), iTitle = col('title', 'descricao', 'description', 'estabelecimento'), iAmt = col('amount', 'valor'), iCat = col('category', 'categoria');
+  if (iDate < 0 || iTitle < 0 || iAmt < 0) throw new Error('não reconheci as colunas (esperava date, title, amount)');
+  const out = [];
+  rows.slice(1).forEach((r) => {
+    const date = parseDate(r[iDate]), amount = parseMoney(r[iAmt]), title = String(r[iTitle] || '').trim();
+    if (!date || amount === null || !title) return;
+    const pm = title.match(/parcela\s*(\d+)\s*\/\s*(\d+)/i);
+    const desc = title.replace(/\s*-?\s*parcela\s*\d+\s*\/\s*\d+\s*/i, ' ').replace(/\s+/g, ' ').trim() || title;
+    out.push({ date, amount: round2(amount), title, desc, nuCat: iCat >= 0 ? normTxt(r[iCat]) : '', inst: pm ? { i: Number(pm[1]), n: Number(pm[2]) } : null });
+  });
+  return out;
+}
+const isPayment = (r) => /pagamento (recebido|em|efetuado)|^pagamento$|pagto/i.test(normTxt(r.title));
+
+// Palavras-chave -> categoria (usadas quando ainda não há histórico)
+const CAT_RULES = [
+  ['lanche', /\b(uber ?eats|ifood)/],
+  ['transporte', /\b(uber|99 ?app|99 ?pop|99 ?taxi|cabify|posto|shell|ipiranga|petrobras|br mania|combustivel|gasolina|estacion|sem parar|conectcar|veloe|metro|bilhete|onibus)\b/],
+  ['lanche', /\b(ifood|rappi|ze delivery|lanche|lanchonete|padaria|panificadora|burger|mc ?donald|bk |subway|habib|bobs|giraffas|cafe|cafeteria|starbucks|acai|sorvet|doceria|confeitaria|pastel|pizza)/],
+  ['mercado', /\b(mercado|supermerc|carrefour|assai|atacad|extra|pao de acucar|big|sams|makro|hortifruti|sacolao|dia )/],
+  ['restaurante', /\b(restaurante|churrascaria|outback|madero|coco bambu|sushi|temaki|bar |boteco|cervejaria|grill|cantina)/],
+  ['saude', /\b(farmacia|drogaria|drogasil|droga raia|raia|pague menos|panvel|hospital|clinica|laborat|consulta|dentista|unimed|odonto)/],
+  ['contas', /\b(spotify|netflix|disney|hbo|max|prime video|amazon prime|youtube|crunchyroll|twitch|apple com|apple|icloud|google|deezer|globoplay|paramount|claro|vivo|tim |oi |internet|energia|enel|cemig|copel|sabesp|agua|gas )/],
+  ['jogos', /\b(steam|playstation|psn|xbox|nintendo|nuuvem|epic games|riot|blizzard|battle ?net|garena|valve|gamepass|game)/],
+  ['vestuario', /\b(renner|c a|cea|riachuelo|zara|shein|hering|marisa|pernambucanas|centauro|netshoes|nike|adidas|youcom|forever|calcad|sapat|roupa|moda)/],
+  ['cosmeticos', /\b(boticario|natura|sephora|avon|eudora|quem disse berenice|beleza|cosmetic|perfum|salao|barbearia|barba|cabelo|manicure|esmalte)/],
+  ['educacao', /\b(udemy|alura|coursera|curso|escola|faculdade|universidade|livraria|saraiva|amazon kindle|kindle|duolingo|psicolog)/],
+  ['lazer', /\b(cinema|cinemark|ingresso|ticketmaster|sympla|eventim|teatro|show|parque|museu|kinoplex|uci )/],
+  ['viagem', /\b(airbnb|booking|hotel|pousada|latam|gol |azul|decolar|123 ?milhas|hurb|rodoviaria|clickbus|buser)/],
+  ['casa', /\b(leroy|tok stok|camicado|etna|magazine luiza|magalu|casas bahia|ponto frio|mobly|madeira|telhanorte|ferragens|utilidades)/],
+  ['outros', /\b(shopee|amazon|mercado ?livre|mercadolivre|aliexpress|temu|americanas|submarino|pix|transfer)/]
+];
+// Categorias do próprio Nubank (CSV antigo) -> suas categorias
+const NU_CATS = { transporte: 'transporte', restaurante: 'restaurante', supermercado: 'mercado', mercado: 'mercado', saude: 'saude', educacao: 'educacao', lazer: 'lazer', viagem: 'viagem', vestuario: 'vestuario', casa: 'casa', servicos: 'contas', eletronicos: 'outros', outros: 'outros' };
+
+function guessCat(row) {
+  const nd = normDesc(row.desc);
+  const valid = (id) => (cats().some((c) => c.id === id) ? id : null);
+  // 1) mesmo estabelecimento que você já categorizou antes
+  const past = [...S.tx].filter((t) => t.kind !== 'income' && t.cat && normDesc(t.desc) === nd).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0]
+    || S.rec.find((r) => normDesc(r.desc) === nd);
+  if (past && valid(past.cat)) return past.cat;
+  // 2) palavras-chave
+  const hay = ' ' + nd + ' ';
+  for (const [id, re] of CAT_RULES) if (re.test(hay) && valid(id)) return id;
+  // 3) categoria que veio no arquivo
+  if (row.nuCat && valid(NU_CATS[row.nuCat])) return NU_CATS[row.nuCat];
+  return valid('outros') || cats()[0]?.id;
+}
+const srcKey = (r) => `nu|${r.date}|${normDesc(r.title)}|${r.amount.toFixed(2)}|${r.inst ? r.inst.i + '/' + r.inst.n : ''}`;
+function hashStr(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0; return h.toString(36); }
+
+function findDuplicate(r, acc, month) {
+  const key = srcKey(r);
+  return S.tx.find((t) => t.srcKey === key) || S.tx.find((t) =>
+    t.kind !== 'income' && t.acc === acc && t.month === month && Math.abs(t.amount - r.amount) < 0.005 &&
+    (r.inst ? (t.inst && t.inst.i === r.inst.i && t.inst.n === r.inst.n) : normDesc(t.desc) === normDesc(r.desc) || t.date === r.date));
+}
+
+async function importNubank(file) {
+  let rows;
+  try { rows = parseNubank(await file.text()); }
+  catch (e) { toast('Não consegui ler o CSV: ' + e.message, true); return; }
+  const payments = rows.filter(isPayment);
+  rows = rows.filter((r) => !isPayment(r));
+  if (!rows.length) { toast('Não achei compras nesse arquivo.', true); return; }
+
+  const credit = accs().filter((a) => a.type === 'credit');
+  const st = {
+    acc: (credit.find((a) => /nu/i.test(a.name)) || credit[0] || accs()[0]).id,
+    month: null
+  };
+  const lastDate = rows.map((r) => r.date).sort().pop();
+  const guessMonth = () => refMonth(lastDate, accById(st.acc));
+  st.month = guessMonth();
+  rows.forEach((r, i) => { r.idx = i; r.cat = guessCat(r); });
+
+  const sheet = openSheet(`
+    <div class="sheet-head"><h3>Importar fatura</h3><button class="icon-btn" data-close aria-label="Fechar">${ICON.close}</button></div>
+    <div class="field"><label>Cartão</label><div class="chips wrap" id="im-acc">${accs().map((a) => `<button class="chip" data-v="${esc(a.id)}"><span class="dot" style="--c:${a.color}"></span>${esc(a.name)}</button>`).join('')}</div></div>
+    <div class="field"><label>Fatura de</label>
+      <div class="month-switch im-month"><button class="icon-btn" data-m="-1" aria-label="Mês anterior">${ICON.left}</button>
+      <div class="month-label"><strong id="im-mlabel"></strong><small>todas as compras do arquivo entram nesta fatura</small></div>
+      <button class="icon-btn" data-m="1" aria-label="Próximo mês">${ICON.right}</button></div></div>
+    <p class="hint" id="im-summary"></p>
+    <div class="im-tools"><button class="link" id="im-all">marcar todas</button><button class="link" id="im-none">desmarcar todas</button></div>
+    <div class="im-list" id="im-list"></div>
+    <div class="sheet-actions"><button class="btn primary" id="im-go">Importar</button></div>`);
+
+  const list = $('#im-list', sheet);
+  const catOpts = (sel) => cats().map((c) => `<option value="${esc(c.id)}" ${c.id === sel ? 'selected' : ''}>${esc(c.icon)} ${esc(c.name)}</option>`).join('');
+  const refreshDupes = () => rows.forEach((r) => { r.dup = !!findDuplicate(r, st.acc, st.month); r.on = !r.dup; });
+  const drawList = () => {
+    list.innerHTML = rows.map((r) => `<div class="im-row ${r.dup ? 'dup' : ''}" data-i="${r.idx}">
+      <input type="checkbox" class="im-check" ${r.on ? 'checked' : ''} aria-label="Importar ${esc(r.desc)}">
+      <div class="im-main">
+        <div class="im-top"><span class="im-desc">${esc(r.desc)}${r.inst ? ` <em class="inst">${r.inst.i}/${r.inst.n}</em>` : ''}</span><b class="${r.amount < 0 ? 'pos' : ''}">${money(r.amount)}</b></div>
+        <div class="im-sub"><span>${ddmm(r.date)}${r.dup ? ' · já lançada' : r.amount < 0 ? ' · estorno' : ''}</span>
+          <select class="im-cat" aria-label="Categoria">${catOpts(r.cat)}</select></div>
+      </div></div>`).join('');
+  };
+  const summary = () => {
+    const sel = rows.filter((r) => r.on);
+    const dups = rows.filter((r) => r.dup).length;
+    $('#im-summary', sheet).innerHTML = `<b>${sel.length}</b> de ${rows.length} compras selecionadas · <b>${money(sum(sel))}</b>` +
+      (dups ? ` · ${dups} já lançada${dups > 1 ? 's' : ''} (desmarcada${dups > 1 ? 's' : ''})` : '') +
+      (payments.length ? ` · ${payments.length} pagamento${payments.length > 1 ? 's' : ''} ignorado${payments.length > 1 ? 's' : ''}` : '');
+    $('#im-go', sheet).textContent = sel.length ? `Importar ${sel.length} compra${sel.length > 1 ? 's' : ''}` : 'Nada selecionado';
+    $('#im-go', sheet).disabled = !sel.length;
+  };
+  const full = () => {
+    $$('#im-acc [data-v]', sheet).forEach((b) => b.classList.toggle('on', b.dataset.v === st.acc));
+    $('#im-mlabel', sheet).textContent = monthLabel(st.month);
+    refreshDupes(); drawList(); summary();
+  };
+
+  $('#im-acc', sheet).addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (b) { st.acc = b.dataset.v; st.month = guessMonth(); full(); } });
+  $$('.im-month [data-m]', sheet).forEach((b) => (b.onclick = () => { st.month = addMonths(st.month, Number(b.dataset.m)); full(); }));
+  list.addEventListener('change', (e) => {
+    const row = rows[Number(e.target.closest('.im-row').dataset.i)];
+    if (e.target.classList.contains('im-check')) { row.on = e.target.checked; summary(); }
+    if (e.target.classList.contains('im-cat')) {
+      row.cat = e.target.value;
+      // aplica a mesma categoria às outras compras do mesmo lugar
+      rows.forEach((r) => { if (r !== row && normDesc(r.desc) === normDesc(row.desc)) r.cat = row.cat; });
+      drawList();
+    }
+  });
+  $('#im-all', sheet).onclick = () => { rows.forEach((r) => (r.on = true)); drawList(); summary(); };
+  $('#im-none', sheet).onclick = () => { rows.forEach((r) => (r.on = false)); drawList(); summary(); };
+  $('#im-go', sheet).onclick = () => {
+    const now = Date.now();
+    const items = rows.filter((r) => r.on).map((r, k) => ({
+      id: newId() + k, kind: 'expense', desc: r.desc, amount: r.amount, cat: r.cat, acc: st.acc, date: r.date, month: st.month,
+      inst: r.inst ? { ...r.inst, group: 'nu' + hashStr(st.acc + '|' + normDesc(r.desc) + '|' + r.inst.n + '|' + r.amount.toFixed(2)) } : null,
+      createdAt: now + k, by: S.user.uid, src: 'nubank-csv', srcKey: srcKey(r)
+    }));
+    store.putMany('transactions', items).catch(onWriteError);
+    closeSheet();
+    S.month = st.month; S.filter = st.acc; S.view = 'list'; render();
+    toast(`${items.length} compra${items.length > 1 ? 's' : ''} importada${items.length > 1 ? 's' : ''} ♡`);
+  };
+  full();
+}
+
+/* =========================================================
    Eventos
    ========================================================= */
 let toastTimer;
@@ -835,6 +1030,11 @@ document.addEventListener('click', async (e) => {
     case 'addAcc': editAcc(null); break;
     case 'exportCsv': exportCsv(); break;
     case 'backup': backup(); break;
+    case 'importCsv': {
+      let inp = $('#import-file');
+      if (!inp) { inp = document.createElement('input'); inp.type = 'file'; inp.id = 'import-file'; inp.accept = '.csv,text/csv,text/comma-separated-values'; inp.hidden = true; document.body.appendChild(inp); }
+      inp.value = ''; inp.onchange = () => inp.files[0] && importNubank(inp.files[0]); inp.click(); break;
+    }
     case 'restore': { const inp = $('#restore-file'); inp.onchange = () => inp.files[0] && restore(inp.files[0]); inp.click(); break; }
     case 'invite': sendInvite(); break;
     case 'myName': openForm({ title: 'Seu nome', fields: [{ key: 'name', label: 'Como você aparece para a outra pessoa', required: true, max: 24 }], values: { name: S.sheet?.names?.[S.user.uid] || myName() }, onSave: (v) => share.setName(v.name).catch(onWriteError) }); break;
