@@ -13,6 +13,9 @@ import { newId, salvarLancamento, excluirLancamento, encerrarGastoFixo, excluirG
 import { lerFatura, renomearCompra, cartaoSugerido, mesSugerido, marcarDuplicadas, importarCompras } from './aplicacao/importacao.js';
 import { criarPlanilhaPadrao, salvarAjustes, gerarBackup, lerBackup, restaurarBackup, gerarCsvDoMes } from './aplicacao/planilha.js';
 
+// Camada de apresentação: telas que já foram separadas do app.js
+import { nonogramaHTML, tocar as nonoTocar, trocarModo as nonoModo, recomecar as nonoRecomecar, venceu as nonoVenceu } from './telas/nonograma.js';
+
 /* =========================================================
    Utilidades
    ========================================================= */
@@ -97,6 +100,7 @@ const ICON = {
   close: '<svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>',
   upload: '<svg viewBox="0 0 24 24"><path d="M12 15V3m0 0-4 4m4-4 4 4"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>',
   search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
+  puzzle: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/><path d="M4.5 4.5h3v3h-3zM10.5 10.5h3v3h-3zM16.5 16.5h3v3h-3z" fill="currentColor" stroke="none"/></svg>',
   eye: '<svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
   eyeOff: '<svg viewBox="0 0 24 24"><path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-2.6 3.5M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a9.6 9.6 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2M3 3l18 18"/></svg>'
 };
@@ -109,20 +113,20 @@ function render() {
   if (S.user === undefined) { app.innerHTML = '<div class="center-screen"><div class="spinner"></div></div>'; return; }
   if (!S.user) { app.innerHTML = loginHTML(); bindLogin(); return; }
   if (!S.settings) { app.innerHTML = '<div class="center-screen"><div class="spinner"></div><p class="muted">carregando seus dados…</p></div>'; return; }
-  const body = S.view === 'list' ? listHTML() : S.view === 'settings' ? settingsHTML() : homeHTML();
+  const body = S.view === 'list' ? listHTML() : S.view === 'settings' ? settingsHTML() : S.view === 'jogo' ? jogoHTML() : homeHTML();
   app.innerHTML = `
     <div class="layout">
       ${navHTML()}
       <main class="container view-${S.view}">${body}</main>
     </div>
-    <button class="fab" data-act="add" aria-label="Novo lançamento">${ICON.plus}</button>`;
+    ${S.view === 'jogo' ? '' : `<button class="fab" data-act="add" aria-label="Novo lançamento">${ICON.plus}</button>`}`;
 }
 
 function navHTML() {
   const item = (v, ic, label) => `<button class="nav-item ${S.view === v ? 'on' : ''}" data-act="view" data-v="${v}">${ICON[ic]}<span>${label}</span></button>`;
   return `<nav class="nav">
     <div class="nav-brand">${esc(S.settings.appName)} <span class="heart">♡</span></div>
-    ${item('home', 'home', 'Início')}${item('list', 'list', 'Lançamentos')}${item('settings', 'gear', 'Ajustes')}
+    ${item('home', 'home', 'Início')}${item('list', 'list', 'Lançamentos')}${item('jogo', 'puzzle', 'Jogo')}${item('settings', 'gear', 'Ajustes')}
     <button class="nav-add btn primary" data-act="add">${ICON.plus}<span>Novo lançamento</span></button>
   </nav>`;
 }
@@ -206,6 +210,11 @@ function homeHTML() {
         ${recent.length ? `<div class="tx-list">${recent.map(txRowHTML).join('')}</div>` : `<p class="muted empty">Toque no <b>+</b> para lançar seu primeiro gasto.</p>`}
       </section>
     </div>`;
+}
+
+/* ---------------- Jogo (o conteúdo fica em telas/nonograma.js) ---------------- */
+function jogoHTML() {
+  return `${headerHTML('Nonograma', 'pinte os quadrados e descubra o desenho')}${nonogramaHTML()}`;
 }
 
 /* ---------------- Lançamentos ---------------- */
@@ -801,6 +810,16 @@ document.addEventListener('click', async (e) => {
   const a = el.dataset.act;
   switch (a) {
     case 'view': S.view = el.dataset.v; render(); window.scrollTo(0, 0); break;
+    case 'nonoCell': {
+      const antes = nonoVenceu();
+      nonoTocar(Number(el.dataset.i), Number(el.dataset.j)); render();
+      if (!antes && nonoVenceu()) toast('Você desenhou o π! ♡');
+      break;
+    }
+    case 'nonoMode': nonoModo(el.dataset.m); render(); break;
+    case 'nonoReset':
+      if (await choose('Recomeçar o nonograma?', 'Todos os quadrados voltam a ficar vazios.', [{ label: 'Recomeçar', value: 'ok', cls: 'danger' }]) === 'ok') { nonoRecomecar(); render(); }
+      break;
     case 'toggleHide':
       S.hide = !S.hide;
       try { localStorage.setItem('mb-hide', S.hide ? '1' : '0'); } catch (e) {}

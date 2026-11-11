@@ -426,3 +426,36 @@ input[type="date"].input { appearance: none; -webkit-appearance: none; }
 [data-theme="pih"] .sheet .im-list, [data-theme="pih"] .sheet .im-cat { background: rgba(255, 255, 255, .6); border-color: rgba(156, 111, 216, .25); }
 [data-theme="pih"] .sheet .link { color: #7c4fc4; }
 #im-go:disabled { opacity: .5; }
+
+/* Jogo: nonograma */
+.nono-card { max-width: 520px; margin: 0 auto; }
+.nono-help { font-size: 13.5px; margin: 0 0 14px; line-height: 1.45; }
+.nono-card.won .nono-help { color: var(--text); font-size: 15px; text-align: center; }
+.nono-grid { display: grid; grid-template-columns: auto repeat(var(--n), minmax(0, 1fr)); gap: 2px; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+.nono-clue { display: flex; align-items: center; justify-content: flex-end; gap: 5px; font-size: 12.5px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.nono-clue.row { padding-right: 6px; }
+.nono-clue.col { flex-direction: column; justify-content: flex-end; gap: 1px; padding-bottom: 4px; line-height: 1.15; }
+.nono-clue.done { color: var(--muted); opacity: .55; }
+.nono-cell { aspect-ratio: 1; min-width: 0; border-radius: 4px; background: var(--input-bg); border: 1px solid var(--input-border); position: relative; transition: background .12s, transform .08s; }
+.nono-cell:active { transform: scale(.9); }
+.nono-cell.br { margin-right: 3px; }
+.nono-cell.bb { margin-bottom: 3px; }
+.nono-cell.on { background: var(--accent); border-color: var(--accent); }
+.nono-cell.x::before, .nono-cell.x::after { content: ''; position: absolute; left: 22%; right: 22%; top: 50%; height: 1.5px; background: var(--muted); border-radius: 1px; }
+.nono-cell.x::before { transform: rotate(45deg); }
+.nono-cell.x::after { transform: rotate(-45deg); }
+.nono-card.won .nono-grid { gap: 0; }
+.nono-card.won .nono-cell { margin: 0; }
+.nono-card.won .nono-cell:not(.on) { background: transparent; border-color: transparent; }
+.nono-card.won .nono-cell.x::before, .nono-card.won .nono-cell.x::after { display: none; }
+.nono-card.won .nono-cell.on { border-radius: 0; animation: nono-pop .5s ease both; }
+@keyframes nono-pop { 0% { transform: scale(.6); } 60% { transform: scale(1.08); } 100% { transform: scale(1); } }
+.nono-actions { display: flex; gap: 10px; align-items: center; margin-top: 16px; }
+.nono-actions .seg { flex: 1; margin: 0; }
+.nono-actions .btn { width: auto; flex: none; }
+[data-theme="pih"] .nono-cell { background: rgba(255, 255, 255, .45); border-color: rgba(156, 111, 216, .25); }
+[data-theme="pih"] .nono-cell.on { background: #9c6fd8; border-color: #9c6fd8; }
+[data-theme="pih"] .nono-clue { color: #4a3567; }
+[data-theme="pih"] .nono-actions .seg { background: rgba(255, 255, 255, .45); border-color: rgba(156, 111, 216, .25); }
+[data-theme="pih"] .nono-actions .seg button { color: #4a3567; }
+@media (prefers-reduced-motion: reduce) { .nono-card.won .nono-cell.on { animation: none; } }
