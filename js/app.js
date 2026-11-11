@@ -10,7 +10,7 @@ import { normDesc } from './dominio/nubank.js';
 
 // Camada de aplicação: casos de uso (juntam domínio + banco)
 import { newId, salvarLancamento, excluirLancamento, encerrarGastoFixo, excluirGastoFixo, parcelasDoGrupo } from './aplicacao/lancamentos.js';
-import { lerFatura, cartaoSugerido, mesSugerido, marcarDuplicadas, importarCompras } from './aplicacao/importacao.js';
+import { lerFatura, renomearCompra, cartaoSugerido, mesSugerido, marcarDuplicadas, importarCompras } from './aplicacao/importacao.js';
 import { criarPlanilhaPadrao, salvarAjustes, gerarBackup, lerBackup, restaurarBackup, gerarCsvDoMes } from './aplicacao/planilha.js';
 
 /* =========================================================
@@ -721,7 +721,8 @@ async function importNubank(file) {
     list.innerHTML = rows.map((r) => `<div class="im-row ${r.dup ? 'dup' : ''}" data-i="${r.idx}">
       <input type="checkbox" class="im-check" ${r.on ? 'checked' : ''} aria-label="Importar ${esc(r.desc)}">
       <div class="im-main">
-        <div class="im-top"><span class="im-desc">${esc(r.desc)}${r.inst ? ` <em class="inst">${r.inst.i}/${r.inst.n}</em>` : ''}</span><b class="${r.amount < 0 ? 'pos' : ''}">${money(r.amount)}</b></div>
+        <div class="im-top"><input class="im-name" value="${esc(r.desc)}" maxlength="60" aria-label="Nome da compra" title="Na fatura: ${esc(r.original)}">${r.inst ? `<em class="inst">${r.inst.i}/${r.inst.n}</em>` : ''}<b class="${r.amount < 0 ? 'pos' : ''}">${money(r.amount)}</b></div>
+        ${r.desc !== r.original ? `<small class="im-orig">na fatura: ${esc(r.original)}</small>` : ''}
         <div class="im-sub"><span>${ddmm(r.date)}${r.dup ? ' · já lançada' : r.amount < 0 ? ' · estorno' : ''}</span>
           <select class="im-cat" aria-label="Categoria">${catOpts(r.cat)}</select></div>
       </div></div>`).join('');
@@ -749,10 +750,22 @@ async function importNubank(file) {
     if (e.target.classList.contains('im-cat')) {
       row.cat = e.target.value;
       // aplica a mesma categoria às outras compras do mesmo lugar
-      rows.forEach((r) => { if (r !== row && normDesc(r.desc) === normDesc(row.desc)) r.cat = row.cat; });
+      rows.forEach((r) => { if (r !== row && normDesc(r.original) === normDesc(row.original)) r.cat = row.cat; });
       drawList();
     }
+    if (e.target.classList.contains('im-name')) {
+      // aplica o mesmo nome às outras compras do mesmo lugar, sem redesenhar (para não tirar o foco)
+      renomearCompra(rows, row, e.target.value).forEach((r) => {
+        const el = list.querySelector(`.im-row[data-i="${r.idx}"]`);
+        if (!el) return;
+        el.querySelector('.im-name').value = r.desc;
+        let orig = el.querySelector('.im-orig');
+        if (r.desc === r.original) orig?.remove();
+        else if (!orig) { orig = document.createElement('small'); orig.className = 'im-orig'; orig.textContent = 'na fatura: ' + r.original; el.querySelector('.im-top').after(orig); }
+      });
+    }
   });
+  list.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.classList.contains('im-name')) { e.preventDefault(); e.target.blur(); } });
   $('#im-all', sheet).onclick = () => { rows.forEach((r) => (r.on = true)); drawList(); summary(); };
   $('#im-none', sheet).onclick = () => { rows.forEach((r) => (r.on = false)); drawList(); summary(); };
   $('#im-go', sheet).onclick = () => {

@@ -98,12 +98,14 @@ export const NU_CATS = { transporte: 'transporte', restaurante: 'restaurante', s
  * @param {{tx:Array, rec:Array, categories:Array}} historico
  */
 export function guessCat(row, { tx, rec, categories }) {
-  const nd = normDesc(row.desc);
+  // Compara pelo nome mostrado ("Uber") e pelo nome original da fatura ("DL *UBERRIDES").
+  const keys = [...new Set([normDesc(row.desc), normDesc(row.original)].filter(Boolean))];
+  const same = (t) => keys.includes(normDesc(t.desc)) || (t.descOriginal && keys.includes(normDesc(t.descOriginal)));
   const valid = (id) => (categories.some((c) => c.id === id) ? id : null);
-  const past = [...tx].filter((t) => t.kind !== 'income' && t.cat && normDesc(t.desc) === nd).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0]
-    || rec.find((r) => normDesc(r.desc) === nd);
+  const past = [...tx].filter((t) => t.kind !== 'income' && t.cat && same(t)).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0]
+    || rec.find(same);
   if (past && valid(past.cat)) return past.cat;
-  const hay = ' ' + nd + ' ';
+  const hay = ' ' + keys.join(' ') + ' ';
   for (const [id, re] of CAT_RULES) if (re.test(hay) && valid(id)) return id;
   if (row.nuCat && valid(NU_CATS[row.nuCat])) return NU_CATS[row.nuCat];
   return valid('outros') || categories[0]?.id;
@@ -120,5 +122,10 @@ export function findDuplicate(r, acc, month, tx) {
   const key = srcKey(r);
   return tx.find((t) => t.srcKey === key) || tx.find((t) =>
     t.kind !== 'income' && t.acc === acc && t.month === month && Math.abs(t.amount - r.amount) < 0.005 &&
-    (r.inst ? (t.inst && t.inst.i === r.inst.i && t.inst.n === r.inst.n) : normDesc(t.desc) === normDesc(r.desc) || t.date === r.date));
+    (r.inst ? (t.inst && t.inst.i === r.inst.i && t.inst.n === r.inst.n) : sameDesc(t, r) || t.date === r.date));
+}
+// Mesma descrição, considerando o nome mostrado e o nome original da fatura dos dois lados.
+function sameDesc(t, r) {
+  const a = [t.desc, t.descOriginal].filter(Boolean).map(normDesc);
+  return [r.desc, r.original].filter(Boolean).map(normDesc).some((k) => a.includes(k));
 }

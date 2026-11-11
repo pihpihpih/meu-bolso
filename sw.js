@@ -1,9 +1,9 @@
 // Service worker: deixa o app abrir rápido e funcionar sem internet.
 // Quando mudar algum arquivo, aumente o número da versão abaixo.
-const CACHE = 'meu-bolso-v6';
+const CACHE = 'meu-bolso-v7';
 const SHELL = ['./', './index.html', './css/style.css', './js/app.js', './js/db.js', './js/firebase-config.js',
   './js/dominio/dinheiro.js', './js/dominio/datas.js', './js/dominio/padroes.js', './js/dominio/parcelas.js',
-  './js/dominio/resumo.js', './js/dominio/nubank.js',
+  './js/dominio/resumo.js', './js/dominio/nubank.js', './js/dominio/estabelecimentos.js',
   './js/aplicacao/lancamentos.js', './js/aplicacao/importacao.js', './js/aplicacao/planilha.js',
   './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png'];
 

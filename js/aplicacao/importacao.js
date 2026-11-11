@@ -6,6 +6,7 @@
 import { store } from '../db.js';
 import { refMonth } from '../dominio/datas.js';
 import { parseNubank, isPayment, normDesc, guessCat, srcKey, hashStr, findDuplicate } from '../dominio/nubank.js';
+import { sugerirNome } from '../dominio/estabelecimentos.js';
 import { newId } from './lancamentos.js';
 
 /** Cartão sugerido: o de crédito com "nu" no nome, senão o primeiro de crédito. */
@@ -29,8 +30,21 @@ export function lerFatura(texto, ctx) {
   const all = parseNubank(texto);
   const payments = all.filter(isPayment);
   const rows = all.filter((r) => !isPayment(r));
-  rows.forEach((r, i) => { r.idx = i; r.cat = guessCat(r, ctx); });
+  rows.forEach((r, i) => {
+    r.idx = i;
+    r.original = r.desc;                      // como veio na fatura: "DL *UBERRIDES"
+    r.desc = sugerirNome(r.original, ctx.tx); // como aparece no app: "Uber"
+    r.cat = guessCat(r, ctx);
+  });
   return { rows, payments };
+}
+
+/** A pessoa mudou o nome de uma compra: aplica o mesmo nome às outras do mesmo lugar. Devolve as linhas alteradas. */
+export function renomearCompra(rows, row, nome) {
+  nome = String(nome || '').trim() || row.original;
+  const mesmas = rows.filter((r) => normDesc(r.original) === normDesc(row.original));
+  mesmas.forEach((r) => { r.desc = nome; });
+  return mesmas;
 }
 
 /** Marca as compras que já foram lançadas antes (e desmarca elas). */
@@ -43,8 +57,8 @@ export function importarCompras(rows, { acc, month, uid }) {
   const now = Date.now();
   const items = rows.filter((r) => r.on).map((r, k) => ({
     id: newId() + k, kind: 'expense', desc: r.desc, amount: r.amount, cat: r.cat, acc, date: r.date, month,
-    inst: r.inst ? { ...r.inst, group: 'nu' + hashStr(acc + '|' + normDesc(r.desc) + '|' + r.inst.n + '|' + r.amount.toFixed(2)) } : null,
-    createdAt: now + k, by: uid, src: 'nubank-csv', srcKey: srcKey(r)
+    inst: r.inst ? { ...r.inst, group: 'nu' + hashStr(acc + '|' + normDesc(r.original || r.desc) + '|' + r.inst.n + '|' + r.amount.toFixed(2)) } : null,
+    createdAt: now + k, by: uid, src: 'nubank-csv', srcKey: srcKey(r), descOriginal: r.original || r.desc
   }));
   return { count: items.length, promise: store.putMany('transactions', items) };
 }
