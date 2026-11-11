@@ -28,6 +28,10 @@ let unwatch = null, seeding = false, lostOnce = false;
 
 const cats = () => S.settings.categories;
 const lastAcc = () => { try { return localStorage.getItem('mb-last-acc'); } catch (e) { return null; } };
+// "Olhinho": esconde os valores nas telas (preferência deste aparelho, como o tema).
+S.hide = (() => { try { return localStorage.getItem('mb-hide') === '1'; } catch (e) { return false; } })();
+/** Valor para MOSTRAR nas telas: respeita o olhinho. (Formulários continuam usando money.) */
+const valor = (v) => (S.hide ? 'R$ ••••' : money(v));
 const myName = () => (S.user && (S.user.name || (S.user.email || '').split('@')[0])) || 'Eu';
 const isShared = () => !!(S.sheet && (S.sheet.members || []).length > 1);
 const nameOf = (uid) => (S.sheet && S.sheet.names && S.sheet.names[uid]) || 'alguém';
@@ -92,7 +96,9 @@ const ICON = {
   right: '<svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>',
   close: '<svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>',
   upload: '<svg viewBox="0 0 24 24"><path d="M12 15V3m0 0-4 4m4-4 4 4"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>',
-  search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>'
+  search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
+  eye: '<svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+  eyeOff: '<svg viewBox="0 0 24 24"><path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-2.6 3.5M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a9.6 9.6 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2M3 3l18 18"/></svg>'
 };
 
 /* =========================================================
@@ -123,7 +129,8 @@ function navHTML() {
 
 function headerHTML(title, sub, action = '') {
   return `<header class="topbar"><div><h1 class="title">${title}</h1>${sub ? `<p class="subtitle">${sub}</p>` : ''}</div>
-    <div class="top-actions">${DEMO ? '<span class="tag">demo</span>' : ''}${action}</div></header>`;
+    <div class="top-actions">${DEMO ? '<span class="tag">demo</span>' : ''}${action}
+      <button class="top-btn eye-btn" data-act="toggleHide" aria-label="${S.hide ? 'Mostrar valores' : 'Esconder valores'}" title="${S.hide ? 'Mostrar valores' : 'Esconder valores'}">${S.hide ? ICON.eyeOff : ICON.eye}</button></div></header>`;
 }
 
 function monthSwitchHTML() {
@@ -144,7 +151,7 @@ function txRowHTML(t) {
       <span class="tx-desc">${esc(t.desc)}${t.inst ? ` <em class="inst">${t.inst.i}/${t.inst.n}</em>` : ''}</span>
       <span class="tx-meta">${income ? '' : esc(c.name) + ' · '}${esc(meta)}${t.date && !t.fixed ? ' · ' + ddmm(t.date) : ''}</span>
     </span>
-    <span class="tx-amt ${income ? 'pos' : ''}">${income ? '+' : ''}${money(t.amount)}</span>
+    <span class="tx-amt ${income ? 'pos' : ''}">${income ? '+' : ''}${valor(t.amount)}</span>
   </button>`;
 }
 
@@ -155,7 +162,7 @@ function homeHTML() {
   const tiles = [{ id: 'fixos', name: 'Gastos fixos', color: 'var(--muted)' }, ...accs()]
     .map((a) => `<button class="acc-tile" data-act="goacc" data-acc="${a.id}">
       <span class="dot" style="--c:${a.color}"></span><span class="acc-name">${esc(a.name)}</span>
-      <b>${money(d.byAcc[a.id])}</b></button>`).join('');
+      <b>${valor(d.byAcc[a.id])}</b></button>`).join('');
 
   const catRows = cats()
     .map((c) => ({ c, spent: d.byCat[c.id] || 0 }))
@@ -167,7 +174,7 @@ function homeHTML() {
     return `<div class="cat-row">
       <span class="cat-ico" style="--c:${c.color}">${esc(c.icon)}</span>
       <div class="cat-main">
-        <div class="cat-top"><span>${esc(c.name)}</span><span><b>${money(spent)}</b><small> · ${share}%</small></span></div>
+        <div class="cat-top"><span>${esc(c.name)}</span><span><b>${valor(spent)}</b><small> · ${share}%</small></span></div>
         <div class="bar small"><i style="width:${(spent / maxSpent) * 100}%;background:${c.color}"></i></div>
       </div></div>`;
   }).join('') || '<p class="muted empty">Nada por aqui ainda.</p>';
@@ -181,13 +188,13 @@ function homeHTML() {
     <div class="home-grid">
       <section class="card hero">
         <span class="label">Sobrando</span>
-        <div class="big ${d.left < 0 ? 'neg' : ''}">${money(d.left)}</div>
+        <div class="big ${d.left < 0 ? 'neg' : ''}">${valor(d.left)}</div>
         <div class="bar"><i style="width:${pct}%"></i></div>
         <div class="hero-row">
-          <div><span class="label">Rendas</span><b>${money(d.income)}</b></div>
-          <div><span class="label">Gastos</span><b>${money(d.spent)}</b></div>
+          <div><span class="label">Rendas</span><b>${valor(d.income)}</b></div>
+          <div><span class="label">Gastos</span><b>${valor(d.spent)}</b></div>
         </div>
-        ${nextInst > 0 ? `<p class="hint">Parcelas já lançadas para ${monthName(addMonths(S.month, 1))}: <b>${money(nextInst)}</b></p>` : ''}
+        ${nextInst > 0 ? `<p class="hint">Parcelas já lançadas para ${monthName(addMonths(S.month, 1))}: <b>${valor(nextInst)}</b></p>` : ''}
       </section>
       <section class="acc-grid">${tiles}</section>
       <section class="card cats">
@@ -221,12 +228,12 @@ function listBodyHTML() {
   const groups = {};
   rest.forEach((t) => (groups[t.date] = groups[t.date] || []).push(t));
   const expTotal = sum(items.filter((t) => t.kind !== 'income'));
-  let html = `<p class="list-total">${items.length} lançamento${items.length > 1 ? 's' : ''} · <b>${money(expTotal)}</b> em gastos</p>`;
-  if (fixed.length) html += `<div class="group"><h3>Gastos fixos <span>${money(sum(fixed))}</span></h3><div class="card tx-list">${fixed.map(txRowHTML).join('')}</div></div>`;
+  let html = `<p class="list-total">${items.length} lançamento${items.length > 1 ? 's' : ''} · <b>${valor(expTotal)}</b> em gastos</p>`;
+  if (fixed.length) html += `<div class="group"><h3>Gastos fixos <span>${valor(sum(fixed))}</span></h3><div class="card tx-list">${fixed.map(txRowHTML).join('')}</div></div>`;
   Object.keys(groups).forEach((date) => {
     const dt = new Date(date + 'T12:00:00');
     const label = cap(dt.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' }));
-    html += `<div class="group"><h3>${esc(label)} <span>${money(sum(groups[date].filter((t) => t.kind !== 'income')))}</span></h3><div class="card tx-list">${groups[date].map(txRowHTML).join('')}</div></div>`;
+    html += `<div class="group"><h3>${esc(label)} <span>${valor(sum(groups[date].filter((t) => t.kind !== 'income')))}</span></h3><div class="card tx-list">${groups[date].map(txRowHTML).join('')}</div></div>`;
   });
   return html;
 }
@@ -259,19 +266,19 @@ function settingsHTML() {
     </section>
     ${shareHTML()}
     <section class="card">
-      <div class="card-head"><h2>Rendas mensais</h2><b>${money(sum(S.settings.incomes))}</b></div>
-      ${S.settings.incomes.map((r) => row('editIncome', r.id, esc(r.name), money(r.amount))).join('')}
+      <div class="card-head"><h2>Rendas mensais</h2><b>${valor(sum(S.settings.incomes))}</b></div>
+      ${S.settings.incomes.map((r) => row('editIncome', r.id, esc(r.name), valor(r.amount))).join('')}
       <button class="btn ghost small" data-act="addIncome">+ Adicionar renda</button>
       <p class="hint">Rendas extras de um mês só: use “Entrada” no botão +.</p>
     </section>
     <section class="card">
-      <div class="card-head"><h2>Gastos fixos</h2><b>${money(sum(activeRec(S.month)))}</b></div>
-      ${recs.map((r) => row('editRec', r.id, `${esc(catById(r.cat).icon)} ${esc(r.desc)}`, money(r.amount), r.endMonth ? `encerrado em ${monthLabel(r.endMonth)}` : '')).join('') || '<p class="muted">Nenhum.</p>'}
+      <div class="card-head"><h2>Gastos fixos</h2><b>${valor(sum(activeRec(S.month)))}</b></div>
+      ${recs.map((r) => row('editRec', r.id, `${esc(catById(r.cat).icon)} ${esc(r.desc)}`, valor(r.amount), r.endMonth ? `encerrado em ${monthLabel(r.endMonth)}` : '')).join('') || '<p class="muted">Nenhum.</p>'}
       <button class="btn ghost small" data-act="addRec">+ Adicionar gasto fixo</button>
     </section>
     <section class="card">
       <h2>Categorias</h2>
-      ${cats().map((c) => row('editCat', c.id, `<span class="cat-ico sm" style="--c:${c.color}">${esc(c.icon)}</span> ${esc(c.name)}`, money(monthData(S.month).byCat[c.id] || 0))).join('')}
+      ${cats().map((c) => row('editCat', c.id, `<span class="cat-ico sm" style="--c:${c.color}">${esc(c.icon)}</span> ${esc(c.name)}`, valor(monthData(S.month).byCat[c.id] || 0))).join('')}
       <button class="btn ghost small" data-act="addCat">+ Nova categoria</button>
     </section>
     <section class="card">
@@ -794,6 +801,10 @@ document.addEventListener('click', async (e) => {
   const a = el.dataset.act;
   switch (a) {
     case 'view': S.view = el.dataset.v; render(); window.scrollTo(0, 0); break;
+    case 'toggleHide':
+      S.hide = !S.hide;
+      try { localStorage.setItem('mb-hide', S.hide ? '1' : '0'); } catch (e) {}
+      render(); break;
     case 'prev': S.month = addMonths(S.month, -1); render(); break;
     case 'next': S.month = addMonths(S.month, 1); render(); break;
     case 'add': openTxSheet(); break;

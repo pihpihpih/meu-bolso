@@ -400,6 +400,7 @@ input[type="date"].input { appearance: none; -webkit-appearance: none; }
 .top-btn { display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 12px; white-space: nowrap; flex: none; border-radius: 12px; font-size: 14px; font-weight: 500;
   background: var(--surface); border: 1.5px solid var(--border); color: var(--text); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
 .top-btn svg { width: 18px; height: 18px; }
+.top-btn.eye-btn { width: 38px; padding: 0; justify-content: center; }
 [data-theme="dark"] .top-btn { color: var(--accent); }
 .topbar .title { min-width: 0; }
 @media (max-width: 420px) { .top-btn .lg { display: none; } .topbar .tag { display: none; } }
