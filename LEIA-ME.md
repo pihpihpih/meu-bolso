@@ -126,6 +126,19 @@ Já deixei pré-cadastrados os dados da sua planilha: as categorias, as 3 fontes
 
 ---
 
+## Importar a fatura do Nubank (CSV)
+
+1. **Pegar o arquivo:** no app do Nubank, abra a fatura (fechada ou atual) e procure a opção de **exportar / enviar por e-mail** em CSV. O arquivo chega no seu e-mail. Salve no celular ou no computador.
+2. **No Meu Bolso:** em **Lançamentos** (final da lista) ou em **Ajustes → Dados**, toque em **Importar fatura do Nubank (CSV)** e escolha o arquivo.
+3. **Revise a prévia:**
+   - confira o **cartão** e o **mês da fatura** (dá pra trocar com ‹ ›);
+   - ajuste a categoria de alguma compra, se precisar. Compras do mesmo lugar mudam juntas;
+   - o que já estava lançado aparece **desmarcado**, para não duplicar;
+   - o "Pagamento recebido" é ignorado, e os estornos entram com valor negativo.
+4. Toque em **Importar**.
+
+O app aprende: depois que você categoriza um lugar uma vez, nas próximas importações ele já sugere a mesma categoria. Parcelas ("Parcela 2/3") são reconhecidas, mas as próximas parcelas só aparecem quando você importar as próximas faturas.
+
 ## Como atualizar o app depois
 
 1. No GitHub, abra o arquivo → ícone de lápis ✏️ → edite → **Commit changes** (ou envie o arquivo novo por *Add file → Upload files*).
