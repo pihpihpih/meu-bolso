@@ -1,81 +1,21 @@
 import { DEMO, initBackend, authApi, watchUser, store, share } from './db.js';
 
+// Camada de domínio: regras puras (sem tela, sem banco)
+import { money, round2, sum, parseNum } from './dominio/dinheiro.js';
+import { cap, todayISO, ymOf, addMonths, monthLabel, monthName, ddmm, refMonth } from './dominio/datas.js';
+import { DEFAULT_SETTINGS, DEFAULT_RECURRING } from './dominio/padroes.js';
+import { splitInstallments } from './dominio/parcelas.js';
+import { activeRecurring, monthSummary } from './dominio/resumo.js';
+import { parseNubank, isPayment, normDesc, guessCat, srcKey, hashStr, findDuplicate } from './dominio/nubank.js';
+
 /* =========================================================
    Utilidades
    ========================================================= */
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
-const money = (v) => BRL.format(v || 0);
-const round2 = (v) => Math.round((v + Number.EPSILON) * 100) / 100;
-const sum = (arr, f = (x) => x.amount) => round2(arr.reduce((a, x) => a + (Number(f(x)) || 0), 0));
+
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
-const MONTHS = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
-const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
-const todayISO = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
-const ymOf = (iso) => iso.slice(0, 7);
-const addMonths = (ym, n) => {
-  let [y, m] = ym.split('-').map(Number);
-  m += n; y += Math.floor((m - 1) / 12); m = (((m - 1) % 12) + 12) % 12 + 1;
-  return `${y}-${String(m).padStart(2, '0')}`;
-};
-const monthLabel = (ym) => { const [y, m] = ym.split('-').map(Number); return `${cap(MONTHS[m - 1])} ${y}`; };
-const monthName = (ym) => MONTHS[Number(ym.split('-')[1]) - 1];
-const ddmm = (iso) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}` : '');
-const parseNum = (s) => {
-  s = String(s ?? '').trim().replace(/\s|R\$/g, '');
-  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
-  const n = parseFloat(s); return isNaN(n) ? 0 : n;
-};
-
-/** Mês de referência (mês da fatura) de uma compra. */
-function refMonth(dateISO, acc) {
-  const ym = ymOf(dateISO);
-  if (!acc || acc.type !== 'credit') return ym;
-  const d = Number(dateISO.slice(8, 10));
-  const close = Number(acc.closingDay) || 1;
-  const due = Number(acc.dueDay) || 10;
-  const closeYm = d >= close ? addMonths(ym, 1) : ym; // em que mês essa fatura fecha
-  return due > close ? closeYm : addMonths(closeYm, 1); // em que mês ela vence
-}
-
-/* =========================================================
-   Padrões (tirados da sua planilha — dá pra editar tudo no app)
-   ========================================================= */
-const DEFAULT_SETTINGS = {
-  appName: 'Meu Bolso',
-  categories: [
-    { id: 'contas', name: 'Contas', icon: '🧾', color: '#e88a8a' },
-    { id: 'cosmeticos', name: 'Cosméticos', icon: '💄', color: '#f0a36b' },
-    { id: 'educacao', name: 'Educação', icon: '📚', color: '#e8c75a' },
-    { id: 'lazer', name: 'Lazer', icon: '🎉', color: '#8fcf7a' },
-    { id: 'mercado', name: 'Mercado', icon: '🛒', color: '#6fb3e0' },
-    { id: 'outros', name: 'Outros', icon: '📦', color: '#8aa9b8' },
-    { id: 'lanche', name: 'Lanche', icon: '🍔', color: '#b39ddb' },
-    { id: 'jogos', name: 'Jogos', icon: '🎮', color: '#e57373' },
-    { id: 'restaurante', name: 'Restaurante', icon: '🍽️', color: '#ff9f6e' },
-    { id: 'saude', name: 'Saúde', icon: '💊', color: '#f2d16b' },
-    { id: 'transporte', name: 'Transporte', icon: '🚗', color: '#7cc47f' },
-    { id: 'casa', name: 'Compras casa', icon: '🏠', color: '#64b5f6' },
-    { id: 'vestuario', name: 'Vestuário', icon: '👕', color: '#80a4b0' },
-    { id: 'viagem', name: 'Viagem', icon: '✈️', color: '#c5a3e0' }
-  ],
-  accounts: [
-    { id: 'xp', name: 'Cartão XP', type: 'credit', closingDay: 1, dueDay: 10, color: '#e88a8a' },
-    { id: 'nubank', name: 'Nubank', type: 'credit', closingDay: 1, dueDay: 10, color: '#a78bfa' },
-    { id: 'debito', name: 'Débito / Pix', type: 'debit', color: '#6ec59a' }
-  ],
-  incomes: [
-    { id: 'r1', name: 'Fonte de Renda 1', amount: 1577 },
-    { id: 'r2', name: 'Fonte de Renda 2', amount: 1992 },
-    { id: 'r3', name: 'Fonte de Renda 3', amount: 400 }
-  ]
-};
-const DEFAULT_RECURRING = [
-  ['Crunchyroll', 20, 'contas'], ['WoW', 40, 'jogos'], ['Spotify', 23.9, 'contas'], ['Celular Pih', 162, 'contas'],
-  ['Twitch Turbo', 25, 'contas'], ['Gamepass', 76, 'jogos'], ['Clube iFood', 8, 'lanche']
-].map(([desc, amount, cat], i) => ({ id: 'fx' + i, desc, amount, cat, startMonth: '2020-01', endMonth: null, createdAt: Date.now() + i }));
 
 /* =========================================================
    Estado
@@ -92,23 +32,9 @@ const byLabel = (t) => (isShared() && t.by ? ' · ' + (t.by === S.user.uid ? 'vo
 const accs = () => S.settings.accounts;
 const catById = (id) => cats().find((c) => c.id === id) || { id, name: 'Sem categoria', icon: '•', color: '#999' };
 const accById = (id) => accs().find((a) => a.id === id) || null;
-const activeRec = (ym) => S.rec.filter((r) => (r.startMonth || '0000') <= ym && (!r.endMonth || ym <= r.endMonth));
+const activeRec = (ym) => activeRecurring(S.rec, ym);
 
-function monthData(ym) {
-  const tx = S.tx.filter((t) => t.month === ym);
-  const exp = tx.filter((t) => t.kind !== 'income');
-  const inc = tx.filter((t) => t.kind === 'income');
-  const fixed = activeRec(ym).map((r) => ({ ...r, fixed: true }));
-  const incomeBase = sum(S.settings.incomes);
-  const income = round2(incomeBase + sum(inc));
-  const all = [...fixed, ...exp];
-  const spent = sum(all);
-  const byAcc = { fixos: sum(fixed) };
-  accs().forEach((a) => (byAcc[a.id] = sum(exp.filter((t) => t.acc === a.id))));
-  const byCat = {};
-  all.forEach((t) => (byCat[t.cat] = round2((byCat[t.cat] || 0) + t.amount)));
-  return { tx, exp, inc, fixed, income, incomeBase, spent, left: round2(income - spent), byAcc, byCat };
-}
+const monthData = (ym) => monthSummary(ym, { tx: S.tx, rec: S.rec, incomes: S.settings.incomes, accounts: accs() });
 
 /* =========================================================
    Tema
@@ -578,7 +504,7 @@ function openTxSheet(existing = null, presetKind = 'expense') {
         const first = refMonth(f.date, accById(f.acc));
         const range = `${monthName(first)} → ${monthLabel(addMonths(first, f.n - 1))}`;
         info.textContent = f.mode === 'total'
-          ? `${f.n}x de ${money(Math.floor((v / f.n) * 100) / 100)} · ${range}`
+          ? `${f.n}x de ${money(splitInstallments(v, f.n).per)} · ${range}`
           : `${f.n}x de ${money(v)} = ${money(v * f.n)} · ${range}`;
       }
     }
@@ -669,9 +595,7 @@ function saveTx(existing, f, amountV, applyAll) {
   }
   // Parcelado: cria todas as parcelas nas faturas seguintes.
   const group = newId();
-  let per, last;
-  if (f.mode === 'total') { per = Math.floor((amountV / f.n) * 100) / 100; last = round2(amountV - per * (f.n - 1)); }
-  else { per = amountV; last = amountV; }
+  const { per, last } = splitInstallments(amountV, f.n, f.mode);
   const items = Array.from({ length: f.n }, (_, i) => ({
     id: newId() + i, kind: 'expense', desc: f.desc, amount: i === f.n - 1 ? last : per, cat: f.cat, acc: f.acc, date: f.date,
     month: addMonths(base, i), inst: { i: i + 1, n: f.n, group }, createdAt: now + i, by: S.user.uid
@@ -806,107 +730,6 @@ async function restore(file) {
    Formato do app/e-mail do Nubank:  date,title,amount
    (versões antigas: date,category,title,amount)
    ========================================================= */
-function parseCSV(text) {
-  text = text.replace(/^﻿/, '');
-  const first = text.split(/\r?\n/)[0] || '';
-  const sep = (first.match(/;/g) || []).length > (first.match(/,/g) || []).length ? ';' : ',';
-  const rows = []; let row = [], cur = '', q = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (q) {
-      if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; }
-      else cur += c;
-    } else if (c === '"') q = true;
-    else if (c === sep) { row.push(cur); cur = ''; }
-    else if (c === '\n' || c === '\r') {
-      if (c === '\r' && text[i + 1] === '\n') i++;
-      row.push(cur); cur = '';
-      if (row.some((x) => x.trim() !== '')) rows.push(row);
-      row = [];
-    } else cur += c;
-  }
-  row.push(cur); if (row.some((x) => x.trim() !== '')) rows.push(row);
-  return rows;
-}
-const normTxt = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
-const normDesc = (s) => normTxt(s).replace(/-?\s*parcela\s*\d+\s*\/\s*\d+/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
-function parseMoney(s) {
-  s = String(s || '').trim().replace(/R\$|\s/g, '');
-  if (/,\d{1,2}$/.test(s)) s = s.replace(/\./g, '').replace(',', '.'); // 1.234,56
-  else s = s.replace(/,/g, '');                                         // 1,234.56 / 1234.56
-  const n = parseFloat(s); return isNaN(n) ? null : n;
-}
-function parseDate(s) {
-  s = String(s || '').trim();
-  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); if (m) return `${m[1]}-${m[2]}-${m[3]}`;
-  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
-  if (m) { const y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`; }
-  return null;
-}
-function parseNubank(text) {
-  const rows = parseCSV(text);
-  if (rows.length < 2) throw new Error('o arquivo está vazio');
-  const head = rows[0].map(normTxt);
-  const col = (...names) => head.findIndex((h) => names.includes(h));
-  const iDate = col('date', 'data'), iTitle = col('title', 'descricao', 'description', 'estabelecimento'), iAmt = col('amount', 'valor'), iCat = col('category', 'categoria');
-  if (iDate < 0 || iTitle < 0 || iAmt < 0) throw new Error('não reconheci as colunas (esperava date, title, amount)');
-  const out = [];
-  rows.slice(1).forEach((r) => {
-    const date = parseDate(r[iDate]), amount = parseMoney(r[iAmt]), title = String(r[iTitle] || '').trim();
-    if (!date || amount === null || !title) return;
-    const pm = title.match(/parcela\s*(\d+)\s*\/\s*(\d+)/i);
-    const desc = title.replace(/\s*-?\s*parcela\s*\d+\s*\/\s*\d+\s*/i, ' ').replace(/\s+/g, ' ').trim() || title;
-    out.push({ date, amount: round2(amount), title, desc, nuCat: iCat >= 0 ? normTxt(r[iCat]) : '', inst: pm ? { i: Number(pm[1]), n: Number(pm[2]) } : null });
-  });
-  return out;
-}
-const isPayment = (r) => /pagamento (recebido|em|efetuado)|^pagamento$|pagto/i.test(normTxt(r.title));
-
-// Palavras-chave -> categoria (usadas quando ainda não há histórico)
-const CAT_RULES = [
-  ['lanche', /\b(uber ?eats|ifood)/],
-  ['transporte', /\b(uber|99 ?app|99 ?pop|99 ?taxi|cabify|posto|shell|ipiranga|petrobras|br mania|combustivel|gasolina|estacion|sem parar|conectcar|veloe|metro|bilhete|onibus)\b/],
-  ['lanche', /\b(ifood|rappi|ze delivery|lanche|lanchonete|padaria|panificadora|burger|mc ?donald|bk |subway|habib|bobs|giraffas|cafe|cafeteria|starbucks|acai|sorvet|doceria|confeitaria|pastel|pizza)/],
-  ['mercado', /\b(mercado|supermerc|carrefour|assai|atacad|extra|pao de acucar|big|sams|makro|hortifruti|sacolao|dia )/],
-  ['restaurante', /\b(restaurante|churrascaria|outback|madero|coco bambu|sushi|temaki|bar |boteco|cervejaria|grill|cantina)/],
-  ['saude', /\b(farmacia|drogaria|drogasil|droga raia|raia|pague menos|panvel|hospital|clinica|laborat|consulta|dentista|unimed|odonto)/],
-  ['contas', /\b(spotify|netflix|disney|hbo|max|prime video|amazon prime|youtube|crunchyroll|twitch|apple com|apple|icloud|google|deezer|globoplay|paramount|claro|vivo|tim |oi |internet|energia|enel|cemig|copel|sabesp|agua|gas )/],
-  ['jogos', /\b(steam|playstation|psn|xbox|nintendo|nuuvem|epic games|riot|blizzard|battle ?net|garena|valve|gamepass|game)/],
-  ['vestuario', /\b(renner|c a|cea|riachuelo|zara|shein|hering|marisa|pernambucanas|centauro|netshoes|nike|adidas|youcom|forever|calcad|sapat|roupa|moda)/],
-  ['cosmeticos', /\b(boticario|natura|sephora|avon|eudora|quem disse berenice|beleza|cosmetic|perfum|salao|barbearia|barba|cabelo|manicure|esmalte)/],
-  ['educacao', /\b(udemy|alura|coursera|curso|escola|faculdade|universidade|livraria|saraiva|amazon kindle|kindle|duolingo|psicolog)/],
-  ['lazer', /\b(cinema|cinemark|ingresso|ticketmaster|sympla|eventim|teatro|show|parque|museu|kinoplex|uci )/],
-  ['viagem', /\b(airbnb|booking|hotel|pousada|latam|gol |azul|decolar|123 ?milhas|hurb|rodoviaria|clickbus|buser)/],
-  ['casa', /\b(leroy|tok stok|camicado|etna|magazine luiza|magalu|casas bahia|ponto frio|mobly|madeira|telhanorte|ferragens|utilidades)/],
-  ['outros', /\b(shopee|amazon|mercado ?livre|mercadolivre|aliexpress|temu|americanas|submarino|pix|transfer)/]
-];
-// Categorias do próprio Nubank (CSV antigo) -> suas categorias
-const NU_CATS = { transporte: 'transporte', restaurante: 'restaurante', supermercado: 'mercado', mercado: 'mercado', saude: 'saude', educacao: 'educacao', lazer: 'lazer', viagem: 'viagem', vestuario: 'vestuario', casa: 'casa', servicos: 'contas', eletronicos: 'outros', outros: 'outros' };
-
-function guessCat(row) {
-  const nd = normDesc(row.desc);
-  const valid = (id) => (cats().some((c) => c.id === id) ? id : null);
-  // 1) mesmo estabelecimento que você já categorizou antes
-  const past = [...S.tx].filter((t) => t.kind !== 'income' && t.cat && normDesc(t.desc) === nd).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0]
-    || S.rec.find((r) => normDesc(r.desc) === nd);
-  if (past && valid(past.cat)) return past.cat;
-  // 2) palavras-chave
-  const hay = ' ' + nd + ' ';
-  for (const [id, re] of CAT_RULES) if (re.test(hay) && valid(id)) return id;
-  // 3) categoria que veio no arquivo
-  if (row.nuCat && valid(NU_CATS[row.nuCat])) return NU_CATS[row.nuCat];
-  return valid('outros') || cats()[0]?.id;
-}
-const srcKey = (r) => `nu|${r.date}|${normDesc(r.title)}|${r.amount.toFixed(2)}|${r.inst ? r.inst.i + '/' + r.inst.n : ''}`;
-function hashStr(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0; return h.toString(36); }
-
-function findDuplicate(r, acc, month) {
-  const key = srcKey(r);
-  return S.tx.find((t) => t.srcKey === key) || S.tx.find((t) =>
-    t.kind !== 'income' && t.acc === acc && t.month === month && Math.abs(t.amount - r.amount) < 0.005 &&
-    (r.inst ? (t.inst && t.inst.i === r.inst.i && t.inst.n === r.inst.n) : normDesc(t.desc) === normDesc(r.desc) || t.date === r.date));
-}
-
 async function importNubank(file) {
   let rows;
   try { rows = parseNubank(await file.text()); }
@@ -923,7 +746,7 @@ async function importNubank(file) {
   const lastDate = rows.map((r) => r.date).sort().pop();
   const guessMonth = () => refMonth(lastDate, accById(st.acc));
   st.month = guessMonth();
-  rows.forEach((r, i) => { r.idx = i; r.cat = guessCat(r); });
+  rows.forEach((r, i) => { r.idx = i; r.cat = guessCat(r, { tx: S.tx, rec: S.rec, categories: cats() }); });
 
   const sheet = openSheet(`
     <div class="sheet-head"><h3>Importar fatura</h3><button class="icon-btn" data-close aria-label="Fechar">${ICON.close}</button></div>
@@ -939,7 +762,7 @@ async function importNubank(file) {
 
   const list = $('#im-list', sheet);
   const catOpts = (sel) => cats().map((c) => `<option value="${esc(c.id)}" ${c.id === sel ? 'selected' : ''}>${esc(c.icon)} ${esc(c.name)}</option>`).join('');
-  const refreshDupes = () => rows.forEach((r) => { r.dup = !!findDuplicate(r, st.acc, st.month); r.on = !r.dup; });
+  const refreshDupes = () => rows.forEach((r) => { r.dup = !!findDuplicate(r, st.acc, st.month, S.tx); r.on = !r.dup; });
   const drawList = () => {
     list.innerHTML = rows.map((r) => `<div class="im-row ${r.dup ? 'dup' : ''}" data-i="${r.idx}">
       <input type="checkbox" class="im-check" ${r.on ? 'checked' : ''} aria-label="Importar ${esc(r.desc)}">
