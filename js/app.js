@@ -3,10 +3,15 @@ import { DEMO, initBackend, authApi, watchUser, store, share } from './db.js';
 // Camada de domínio: regras puras (sem tela, sem banco)
 import { money, round2, sum, parseNum } from './dominio/dinheiro.js';
 import { cap, todayISO, ymOf, addMonths, monthLabel, monthName, ddmm, refMonth } from './dominio/datas.js';
-import { DEFAULT_SETTINGS, DEFAULT_RECURRING } from './dominio/padroes.js';
+import { DEFAULT_SETTINGS } from './dominio/padroes.js';
 import { splitInstallments } from './dominio/parcelas.js';
 import { activeRecurring, monthSummary } from './dominio/resumo.js';
-import { parseNubank, isPayment, normDesc, guessCat, srcKey, hashStr, findDuplicate } from './dominio/nubank.js';
+import { normDesc } from './dominio/nubank.js';
+
+// Camada de aplicação: casos de uso (juntam domínio + banco)
+import { newId, salvarLancamento, excluirLancamento, encerrarGastoFixo, excluirGastoFixo, parcelasDoGrupo } from './aplicacao/lancamentos.js';
+import { lerFatura, cartaoSugerido, mesSugerido, marcarDuplicadas, importarCompras } from './aplicacao/importacao.js';
+import { criarPlanilhaPadrao, salvarAjustes, gerarBackup, lerBackup, restaurarBackup, gerarCsvDoMes } from './aplicacao/planilha.js';
 
 /* =========================================================
    Utilidades
@@ -14,8 +19,6 @@ import { parseNubank, isPayment, normDesc, guessCat, srcKey, hashStr, findDuplic
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
-const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
 
 /* =========================================================
    Estado
@@ -73,7 +76,7 @@ function onWriteError(e) {
 }
 function saveSettings(patch) {
   S.settings = { ...S.settings, ...patch };
-  store.saveSettings(S.settings).catch(onWriteError);
+  salvarAjustes(S.settings).catch(onWriteError);
   render();
 }
 
@@ -541,20 +544,19 @@ function openTxSheet(existing = null, presetKind = 'expense') {
         { label: `Encerrar (some a partir de ${monthName(S.month)})`, value: 'end' },
         { label: 'Excluir de todos os meses', value: 'del', cls: 'danger' }]);
       if (!v) return;
-      if (v === 'end') store.put('recurring', existing.id, { ...existing, endMonth: addMonths(S.month, -1) }).catch(onWriteError);
-      else store.del('recurring', existing.id).catch(onWriteError);
+      if (v === 'end') encerrarGastoFixo(existing, S.month).catch(onWriteError);
+      else excluirGastoFixo(existing).catch(onWriteError);
     } else if (existing.inst) {
-      const group = S.tx.filter((t) => t.inst && t.inst.group === existing.inst.group);
+      const group = parcelasDoGrupo(existing, S.tx);
       const v = await choose('Excluir parcela', `${existing.desc} ${existing.inst.i}/${existing.inst.n}`, [
         { label: 'Só esta parcela', value: 'one' },
         { label: `Todas as ${group.length} parcelas`, value: 'all', cls: 'danger' }]);
       if (!v) return;
-      if (v === 'one') store.del('transactions', existing.id).catch(onWriteError);
-      else store.delMany('transactions', group.map((t) => t.id)).catch(onWriteError);
+      excluirLancamento(existing, { todas: v === 'all', tx: S.tx }).catch(onWriteError);
     } else {
       const v = await choose('Excluir lançamento?', `${existing.desc} · ${money(existing.amount)}`, [{ label: 'Excluir', value: 'del', cls: 'danger' }]);
       if (!v) return;
-      store.del('transactions', existing.id).catch(onWriteError);
+      excluirLancamento(existing).catch(onWriteError);
     }
     closeSheet(); toast('Excluído');
   });
@@ -564,43 +566,12 @@ function openTxSheet(existing = null, presetKind = 'expense') {
 }
 
 function saveTx(existing, f, amountV, applyAll) {
-  const now = Date.now();
-  if (f.kind === 'fixed') {
-    const base = existing && existing.__rec ? { ...existing } : { id: newId(), startMonth: S.month, endMonth: null, createdAt: now };
-    store.put('recurring', base.id, { by: S.user.uid, ...base, desc: f.desc, amount: amountV, cat: f.cat }).catch(onWriteError);
-    return;
-  }
-  if (f.kind === 'income') {
-    const id = existing ? existing.id : newId();
-    store.put('transactions', id, { ...(existing || { createdAt: now, by: S.user.uid }), kind: 'income', desc: f.desc, amount: amountV, date: f.date, month: ymOf(f.date), cat: null, acc: null }).catch(onWriteError);
-    return;
-  }
-  const acc = accById(f.acc);
-  const base = refMonth(f.date, acc);
-  try { localStorage.setItem('mb-last-acc', f.acc); } catch (e) {}
-
-  if (existing) {
-    if (existing.inst && applyAll) {
-      const group = S.tx.filter((t) => t.inst && t.inst.group === existing.inst.group);
-      store.putMany('transactions', group.map((t) => ({ ...t, desc: f.desc, amount: amountV, cat: f.cat, acc: f.acc, date: f.date, month: addMonths(base, t.inst.i - 1) }))).catch(onWriteError);
-    } else {
-      const month = existing.inst ? addMonths(base, existing.inst.i - 1) : base;
-      store.put('transactions', existing.id, { ...existing, desc: f.desc, amount: amountV, cat: f.cat, acc: f.acc, date: f.date, month }).catch(onWriteError);
-    }
-    return;
-  }
-  if (f.n === 1) {
-    store.put('transactions', newId(), { kind: 'expense', desc: f.desc, amount: amountV, cat: f.cat, acc: f.acc, date: f.date, month: base, inst: null, createdAt: now, by: S.user.uid }).catch(onWriteError);
-    return;
-  }
-  // Parcelado: cria todas as parcelas nas faturas seguintes.
-  const group = newId();
-  const { per, last } = splitInstallments(amountV, f.n, f.mode);
-  const items = Array.from({ length: f.n }, (_, i) => ({
-    id: newId() + i, kind: 'expense', desc: f.desc, amount: i === f.n - 1 ? last : per, cat: f.cat, acc: f.acc, date: f.date,
-    month: addMonths(base, i), inst: { i: i + 1, n: f.n, group }, createdAt: now + i, by: S.user.uid
-  }));
-  store.putMany('transactions', items).catch(onWriteError);
+  // Lembrar o último cartão é preferência deste aparelho (tela), não regra do app.
+  if (f.kind === 'expense') { try { localStorage.setItem('mb-last-acc', f.acc); } catch (e) {} }
+  salvarLancamento(
+    { kind: f.kind, desc: f.desc, amount: amountV, cat: f.cat, acc: f.acc, date: f.date, n: f.n, mode: f.mode },
+    { existing, applyAll, uid: S.user.uid, month: S.month, tx: S.tx, accounts: accs() }
+  ).catch(onWriteError);
 }
 
 /* ---------------- Formulário genérico (ajustes) ---------------- */
@@ -699,30 +670,21 @@ function download(name, text, type) {
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 function exportCsv() {
-  const d = monthData(S.month);
-  const q = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
-  const num = (v) => String(v.toFixed(2)).replace('.', ',');
-  const rows = [['Data', 'Descrição', 'Categoria', 'Conta', 'Parcela', 'Tipo', 'Valor']];
-  d.fixed.forEach((r) => rows.push(['', r.desc, catById(r.cat).name, 'Gastos fixos', '', 'Fixo', num(r.amount)]));
-  [...d.exp, ...d.inc].sort((a, b) => (a.date || '').localeCompare(b.date || '')).forEach((t) => rows.push([
-    ddmm(t.date), t.desc, t.kind === 'income' ? '' : catById(t.cat).name, t.kind === 'income' ? '' : accById(t.acc)?.name || '',
-    t.inst ? `${t.inst.i}/${t.inst.n}` : '', t.kind === 'income' ? 'Entrada' : 'Gasto', num(t.amount)]));
-  download(`gastos-${S.month}.csv`, '﻿' + rows.map((r) => r.map(q).join(';')).join('\n'), 'text/csv;charset=utf-8');
+  const { nome, texto } = gerarCsvDoMes(S.month, monthData(S.month), { cat: (id) => catById(id).name, acc: (id) => accById(id)?.name || '' });
+  download(nome, texto, 'text/csv;charset=utf-8');
 }
 function backup() {
-  download(`meu-bolso-backup-${todayISO()}.json`, JSON.stringify({ version: 1, settings: S.settings, transactions: S.tx, recurring: S.rec }, null, 1), 'application/json');
+  const { nome, texto } = gerarBackup({ settings: S.settings, tx: S.tx, rec: S.rec });
+  download(nome, texto, 'application/json');
 }
 async function restore(file) {
-  try {
-    const data = JSON.parse(await file.text());
-    if (!data.settings || !Array.isArray(data.transactions)) throw new Error('arquivo inválido');
-    const ok = await choose('Restaurar backup?', `${data.transactions.length} lançamentos e ${(data.recurring || []).length} gastos fixos serão adicionados/atualizados.`, [{ label: 'Restaurar', value: true, cls: 'primary' }]);
-    if (!ok) return;
-    saveSettings(data.settings);
-    await store.putMany('transactions', data.transactions);
-    await store.putMany('recurring', data.recurring || []);
-    toast('Backup restaurado ♡');
-  } catch (e) { toast('Não consegui ler o backup: ' + e.message, true); }
+  let data;
+  try { data = lerBackup(await file.text()); }
+  catch (e) { toast('Não consegui ler o backup: ' + e.message, true); return; }
+  const ok = await choose('Restaurar backup?', `${data.transactions.length} lançamentos e ${data.recurring.length} gastos fixos serão adicionados/atualizados.`, [{ label: 'Restaurar', value: true, cls: 'primary' }]);
+  if (!ok) return;
+  try { await restaurarBackup(data); toast('Backup restaurado ♡'); }
+  catch (e) { onWriteError(e); }
 }
 
 /* =========================================================
@@ -731,22 +693,14 @@ async function restore(file) {
    (versões antigas: date,category,title,amount)
    ========================================================= */
 async function importNubank(file) {
-  let rows;
-  try { rows = parseNubank(await file.text()); }
+  let rows, payments;
+  try { ({ rows, payments } = lerFatura(await file.text(), { tx: S.tx, rec: S.rec, categories: cats() })); }
   catch (e) { toast('Não consegui ler o CSV: ' + e.message, true); return; }
-  const payments = rows.filter(isPayment);
-  rows = rows.filter((r) => !isPayment(r));
   if (!rows.length) { toast('Não achei compras nesse arquivo.', true); return; }
 
-  const credit = accs().filter((a) => a.type === 'credit');
-  const st = {
-    acc: (credit.find((a) => /nu/i.test(a.name)) || credit[0] || accs()[0]).id,
-    month: null
-  };
-  const lastDate = rows.map((r) => r.date).sort().pop();
-  const guessMonth = () => refMonth(lastDate, accById(st.acc));
+  const st = { acc: cartaoSugerido(accs()), month: null };
+  const guessMonth = () => mesSugerido(rows, accById(st.acc));
   st.month = guessMonth();
-  rows.forEach((r, i) => { r.idx = i; r.cat = guessCat(r, { tx: S.tx, rec: S.rec, categories: cats() }); });
 
   const sheet = openSheet(`
     <div class="sheet-head"><h3>Importar fatura</h3><button class="icon-btn" data-close aria-label="Fechar">${ICON.close}</button></div>
@@ -762,7 +716,7 @@ async function importNubank(file) {
 
   const list = $('#im-list', sheet);
   const catOpts = (sel) => cats().map((c) => `<option value="${esc(c.id)}" ${c.id === sel ? 'selected' : ''}>${esc(c.icon)} ${esc(c.name)}</option>`).join('');
-  const refreshDupes = () => rows.forEach((r) => { r.dup = !!findDuplicate(r, st.acc, st.month, S.tx); r.on = !r.dup; });
+  const refreshDupes = () => marcarDuplicadas(rows, st.acc, st.month, S.tx);
   const drawList = () => {
     list.innerHTML = rows.map((r) => `<div class="im-row ${r.dup ? 'dup' : ''}" data-i="${r.idx}">
       <input type="checkbox" class="im-check" ${r.on ? 'checked' : ''} aria-label="Importar ${esc(r.desc)}">
@@ -802,16 +756,11 @@ async function importNubank(file) {
   $('#im-all', sheet).onclick = () => { rows.forEach((r) => (r.on = true)); drawList(); summary(); };
   $('#im-none', sheet).onclick = () => { rows.forEach((r) => (r.on = false)); drawList(); summary(); };
   $('#im-go', sheet).onclick = () => {
-    const now = Date.now();
-    const items = rows.filter((r) => r.on).map((r, k) => ({
-      id: newId() + k, kind: 'expense', desc: r.desc, amount: r.amount, cat: r.cat, acc: st.acc, date: r.date, month: st.month,
-      inst: r.inst ? { ...r.inst, group: 'nu' + hashStr(st.acc + '|' + normDesc(r.desc) + '|' + r.inst.n + '|' + r.amount.toFixed(2)) } : null,
-      createdAt: now + k, by: S.user.uid, src: 'nubank-csv', srcKey: srcKey(r)
-    }));
-    store.putMany('transactions', items).catch(onWriteError);
+    const { count, promise } = importarCompras(rows, { acc: st.acc, month: st.month, uid: S.user.uid });
+    promise.catch(onWriteError);
     closeSheet();
     S.month = st.month; S.filter = st.acc; S.view = 'list'; render();
-    toast(`${items.length} compra${items.length > 1 ? 's' : ''} importada${items.length > 1 ? 's' : ''} ♡`);
+    toast(`${count} compra${count > 1 ? 's' : ''} importada${count > 1 ? 's' : ''} ♡`);
   };
   full();
 }
@@ -926,8 +875,7 @@ function onUser(user) {
         if (fromCache) return; // ainda esperando o servidor confirmar
         if (!seeding) {
           seeding = true;
-          store.saveSettings(DEFAULT_SETTINGS).catch(onWriteError);
-          store.putMany('recurring', DEFAULT_RECURRING.map((r) => ({ ...r, by: user.uid }))).catch(onWriteError);
+          criarPlanilhaPadrao(user.uid).catch(onWriteError);
           S.settings = { ...DEFAULT_SETTINGS };
         }
       } else {
